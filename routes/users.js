@@ -15,8 +15,22 @@ const Score = require('../models/Score');
 router.get('/', auth, async (req,res) => {
   try {
     // Gets all users and sort by date
-    const users = await User.find().sort({ _id: '-1' });
+    const users = await User.find().select('-password -createdAt -updatedAt').sort({ _id: '-1' });
     res.json(users);
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server Error');
+  }
+});
+
+// @route   GET api/users/:id
+// @desc    Get a user
+// @access  Private
+router.get('/:id', auth, async (req,res) => {
+  try {
+    // Gets user by id
+    const user = await User.findById(req.params.id).select('-password -createdAt -updatedAt');
+    res.json(user);
   } catch (err) {
     console.error(err.message);
     res.status(500).send('Server Error');
@@ -103,11 +117,11 @@ router.put('/update/username/:id', [ auth, [
 
   try {
     // Find user that matches the id
-    let user = await User.findOne().where({ username: username });
+    let user = await User.findOne({ username });
 
     // If user does not exists
     if(user) {
-      return res.status(404).json({ msg: 'Email is already taken by another user.' });
+      return res.status(404).json({ msg: 'Username is already taken by another user.' });
     } 
     else {
       // Update the username in Users database
@@ -221,25 +235,33 @@ router.put('/update/password/:id', [ auth, [
 // @desc    Delete a user
 // @access  Private
 router.delete('/:id', auth, async (req,res) => {
-    
   // Find the user by id
   let user = await User.findById(req.params.id) 
 
   if(!user) {
     return res.status(404).json({ msg: 'User not found' });
   }
-  // If user exists then compare user input password to current password in database
-  let isMatch = await bcrypt.compare(req.headers.password, user.password);
-  
-  if(!isMatch) {
-    return res.status(400).json({ msg: 'Incorrect password'});
+
+  // IF user exists then check if user owns the user account
+  const userId = req.headers.userId;
+  let userMatch = userId === req.params.userId;
+
+  if(!userMatch) {
+    return res.status(400).json({ msg: 'The account does not belong to you.' });
   } else {
-    try {
-      await User.findByIdAndDelete(req.params.id);
-      res.json({ msg: 'User deleted' });
-    } catch (err) {
-      console.error(err.message);
-      res.status(500).send('Server Error');
+    // If user exists then compare user input password to current password in database
+    let isMatch = await bcrypt.compare(req.headers.password, user.password);
+    
+    if(!isMatch) {
+      return res.status(400).json({ msg: 'Incorrect password'});
+    } else {
+      try {
+        await User.findByIdAndDelete(req.params.id);
+        res.json({ msg: 'User deleted' });
+      } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Server Error');
+      }
     }
   }
 });
