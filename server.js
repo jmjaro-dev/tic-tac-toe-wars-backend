@@ -26,7 +26,12 @@ const io = socketio(server, {
 
 app.use(cors());
 
-// Room Stete
+// ! API Routes
+app.use('/api/auth', require('./routes/auth'));
+app.use('/api/users', require('./routes/users'));
+app.use('/api/scores', require('./routes/scores'));
+
+// ! Room State
 const rooms = [];
 
 // ? Room Functions
