@@ -220,17 +220,14 @@ io.on('connection', socket => {
     
     // Check for winner
     if(playerWhoWon !== null && currentBoard.movesLeft > 0) {
-      socket.offAny();
       if(!socket.sentMydata) {
         io.to(room).emit('winner', { boardState: currentBoard.board, playerWhoWon })
         socket.sentMydata = true;
       }
     } else if(playerWhoWon === null && currentBoard.movesLeft === 0 ) {
       // Check for draw
-      socket.offAny();
       io.to(room).emit('draw', { boardState: currentBoard.board, movesLeft: currentBoard.movesLeft });
     } else {
-      socket.offAny();
       currentBoard.switchTurn();
       io.to(room).emit('updateBoard', { boardState: currentBoard.board, nextTurn: currentBoard.turn, movesLeft: currentBoard.movesLeft })
     }   
