@@ -30,6 +30,10 @@ router.get('/:id', auth, async (req,res) => {
   try {
     // Gets user by id
     const user = await User.findById(req.params.id).select('-password -createdAt -updatedAt');
+    if(!user) {
+      return res.status(400).json({ msg: 'User does not exists.' });
+    } 
+    
     res.json(user);
   } catch (err) {
     console.error(err.message);
@@ -55,7 +59,7 @@ router.post('/', [
     
   try {
     // Finds a user that is using the 'username'
-    let user = await User.findOne({ username });
+    let user = await User.findOne({ username }).select("username");
 
     // Checks if that user exists
     if(user) {
@@ -110,7 +114,7 @@ router.put('/update/username/:id', [ auth, [
     return res.status(400).json({ errors: errors.array() });
   }
 
-  // Destructure email
+  // Destructure
   const { username } = req.body;
 
   const usernameField = { username };
@@ -126,62 +130,13 @@ router.put('/update/username/:id', [ auth, [
     else {
       // Update the username in Users database
       let updated_user = await User.findByIdAndUpdate(req.params.id, { $set: usernameField }, { new: true }).select('-password -score');
+      // Update the username in Score database
+      await Score.findOneAndUpdate({ userId: req.params.id }, { $set: usernameField }, { new: true }).select('-password -score');
       res.json(updated_user);
     } 
   } catch (err) {
     console.error(err.message);
     res.status(500).send('Server Error');
-  }
-});
-
-// @route   PUT api/users/scores/:user_id
-// @desc    Update user's username in Scores Collection
-// @access  Private
-router.put('/scores/:id', [ auth, [
-  check('username', 'Please enter a username').not().isEmpty()
-  ] ], async (req,res) => {
-  const errors = validationResult(req);
-
-  // If there are errors in validation
-  if(!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
-  }
-
-  // Destructure firstName and lastName
-  const { username } = req.body;
-
-  // Build updated user object 
-  const usernameField = { username };
-  
-  try {
-    // Find user that matches the id
-    let user = await User.findById(req.params.id);
-
-    // If user does not exists
-    if(!user) {
-      return res.status(404).json({ msg: 'User not found' });
-    } 
-    else {
-      // Update User's Info in Scores collection
-      Score.find().where({ 'userId': req.params.id })
-      .then(scores => {
-        scores.forEach(async score => {
-          await Score.findByIdAndUpdate(score.userId, { $set: usernameField }, { new: false })
-          .then( _ => score)
-          .catch(err => res.status(400).send({ msg: `Error: ${err}.`}));
-        });
-      })
-      .then( async _ => {
-        let updated_scores = await Score.find().where({ 'userId': req.params.id });
-        if(updated_scores) {
-          res.json(updated_scores);
-        }
-      })
-      .catch(err => res.status(400).json({ msg: `Error: ${err}`})); 
-    } 
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).send({ msg: `Server Error: ${err.message}`});
   }
 });
 
@@ -236,7 +191,7 @@ router.put('/update/password/:id', [ auth, [
 // @access  Private
 router.delete('/:id', auth, async (req,res) => {
   // Find the user by id
-  let user = await User.findById(req.params.id) 
+  let user = await User.findById(req.params.id).select('username password');
 
   if(!user) {
     return res.status(404).json({ msg: 'User not found' });
@@ -249,6 +204,7 @@ router.delete('/:id', auth, async (req,res) => {
   if(!userMatch) {
     return res.status(400).json({ msg: 'The account does not belong to you.' });
   } else {
+
     // If user exists then compare user input password to current password in database
     let isMatch = await bcrypt.compare(req.headers.password, user.password);
     
@@ -256,7 +212,11 @@ router.delete('/:id', auth, async (req,res) => {
       return res.status(400).json({ msg: 'Incorrect password'});
     } else {
       try {
+        // Delete user in Users collections
         await User.findByIdAndDelete(req.params.id);
+        // Delete user in Scores collections
+        await Score.findOneAndDelete({ userId: req.params.id });
+
         res.json({ msg: 'User deleted' });
       } catch (err) {
         console.error(err.message);

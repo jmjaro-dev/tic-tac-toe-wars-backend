@@ -5,7 +5,6 @@ const mongoose = require('mongoose');
 const http = require('http');
 const socketio = require("socket.io");
 const { v4: uuidv4 } = require('uuid');
-const e = require('cors');
 require('dotenv').config();
 // Utils
 const GameBoard = require('./utils/GameBoard');
@@ -36,7 +35,7 @@ const rooms = [];
 
 // ? Room Functions
 // Create Room 
-const createRoom = () => {
+const createRoom = (resolve) => {
   const id = uuidv4();
   const room = {
     id,
@@ -46,7 +45,7 @@ const createRoom = () => {
   
   rooms.push(room);
 
-  return room.id;
+  resolve(room.id);
 }
 
 // Check Room existence
@@ -62,7 +61,7 @@ const checkRoomExistence = (roomID) => {
 
 // Get Current Room 
 const getCurrentRoom = (roomID) => {
-  const currentRoom = rooms.filter(room => room.id === roomID);
+  currentRoom = rooms.filter(room => room.id === roomID);
   
   return currentRoom;
 }
@@ -98,16 +97,22 @@ const newBoard = (room) => {
 
 // ? Player functions
 // Add player to Room 
-const playerJoin = (id, name, room) => {
-  const player = { id, name, room, token: null };
+const playerJoin = (id, name, userId, room, wins) => {
+  const player = { id, name, userId, room, wins, token: null };
 
   const index = rooms.findIndex(room => room.id === player.room);
 
   rooms[index].players.push(player);
 }
 
+//  Kick Player from room
+function kickPlayer(room){
+  currentRoom = getCurrentRoom(room)[0];
+  currentRoom.players.pop();
+}
+
 // If Player disconnects/left the room then remove in room players 
-const removePlayer = (playerID, roomID) => {
+function removePlayer(playerID, roomID){
   // Get Room Index
   const roomIndex = rooms.findIndex(room => room.id === roomID);
 
@@ -121,45 +126,43 @@ const removePlayer = (playerID, roomID) => {
 }
 
 // Get the room of the player 
-const getPlayerRoom = (playerID) => {
+function getPlayerRoom(playerID) {
   const playerRoom = rooms.filter(room => room.players.filter(player => player.id === playerID));
   
   if(playerRoom.length > 0) {
-    console.log(`Player Room : ${playerRoom[0].id}`);
     return playerRoom[0].id;
   }
 }
 
 // Get Room players 
-const getRoomPlayers = (roomID) => {
+function getRoomPlayers(roomID) {
   if(rooms.length > 0) {
-    const players = rooms.filter(room => room.id === roomID)[0].players; 
+    players = rooms.filter(room => room.id === roomID)[0].players; 
     return players;
   }
 }
 
 // Run when a client connects
 io.on('connection', socket => {
-  console.log("new user connected");
   // Listen to 'newGame' event
-  socket.on("createGame", (name) => {
-    const room = createRoom();
+  socket.on("createGame", () => {
     // Emit 'roomCreated' event to client passing the room ID
-    socket.emit("roomCreated", { room, name });
+    new Promise(createRoom).then(room => socket.emit("roomCreated", room ));
   });
 
   // Listen to 'joinGame' event
-  socket.on("joinGame", ({ room, name }) => {
+  socket.on("joinGame", (room) => {
     // Check if room is existing
     if(checkRoomExistence(room)) {
-      socket.emit("joinConfirmed", { room, name });
+      socket.emit("joinConfirmed", room );
     } else {
-      socket.emit("onJoinError", "Room does not exist.");
+      const error = "Room does not exist.";
+      socket.emit("onJoinError", error );
     }
   });
 
   // Listen to "newRoomJoin" event
-  socket.on("newRoomJoin", ({ room, name }) => {
+  socket.on("newRoomJoin", ({ room, userId, name, wins }) => {
     // If room and name is not provided redirect to home page
     if((room === '' || room === undefined) && (name === '' || name === undefined)) {
       io.to(socket.id).emit("joinError");
@@ -168,9 +171,8 @@ io.on('connection', socket => {
     if(checkRoomExistence(room)) {
       // Put new player into the room
       socket.join(room);
-      console.log(`${name} joined room : ${room}`)
       const id = socket.id;
-      playerJoin(id, name, room);
+      playerJoin(id, name, userId, room, wins);
 
       // Get Room players
       playersInRoom = getRoomPlayers(room);
@@ -178,12 +180,10 @@ io.on('connection', socket => {
       // If not enough players in room emit 'waiting' event
       if(playersInRoom.length === 1){
         io.to(room).emit("waiting");
-        console.log(`A Player is waiting in room: ${room}`)
       }
 
       // If have enough players then set the Game 
       if(playersInRoom.length === 2) {
-        console.log(`A Game is starting in room: ${room}`);
         // Assign Tokens
         assignToken(room);
         // Emit 'tokenAssignment' to players
@@ -192,16 +192,22 @@ io.on('connection', socket => {
         newBoard(room);
 
         const boardState = currentRoom.board.board;
-        const turn = currentRoom.board.turn;
+        const firstTurn = currentRoom.board.turn;
         const players = playersInRoom;
         // Emit 'starting' event and send the Game state to players
-        io.to(room).emit("starting", { boardState, turn, players });
+        io.to(room).emit("starting", { boardState, firstTurn, players });
+      }
 
-        console.log("Players in the room:");
-        playersInRoom.map(player => console.log(`id: ${player.id}, name: ${player.name}`));
+      // If players > 3 kick last player who entered the room 
+      if(playersInRoom.length === 3) {
+        socket.leave(room);
+        kickPlayer(room);
+        const error = "Already have enough players in the room";
+        io.to(socket.id).emit("joinError", error);
       }
     } else {
-      io.to(socket.id).emit("joinError");
+      const error = "Room does not exists.";
+      io.to(socket.id).emit("joinError", error);
     }
   })
 
@@ -209,16 +215,27 @@ io.on('connection', socket => {
   socket.on("playerMove", ({ room, token, idx }) => {
     currentBoard = getCurrentRoom(room)[0].board;
     currentBoard.playerMove(idx, token);
-    const winner = currentBoard.determineWinner(currentBoard.board);
+    playerWhoWon = currentBoard.determineWinner(currentBoard.board);
     
-    if(winner !== null && currentBoard.movesLeft > 0) {
-      io.to(room).emit('winner', { boardState: currentBoard.board, winner })
-    } else if(winner === null && currentBoard.movesLeft > 0 ) {
-      currentBoard.switchTurn();
-      io.to(room).emit('updateBoard', { boardState: currentBoard.board, turn: currentBoard.turn, movesLeft: currentBoard.movesLeft })
-    } else {
+    
+    // Check for winner
+    if(playerWhoWon !== null && currentBoard.movesLeft > 0) {
+      socket.offAny();
+      if(!socket.sentMydata) {
+        io.to(room).emit('winner', { boardState: currentBoard.board, playerWhoWon })
+        socket.sentMydata = true;
+      }
+    } else if(playerWhoWon === null && currentBoard.movesLeft === 0 ) {
+      // Check for draw
+      socket.offAny();
       io.to(room).emit('draw', { boardState: currentBoard.board, movesLeft: currentBoard.movesLeft });
-    }
+    } else {
+      socket.offAny();
+      currentBoard.switchTurn();
+      io.to(room).emit('updateBoard', { boardState: currentBoard.board, nextTurn: currentBoard.turn, movesLeft: currentBoard.movesLeft })
+    }   
+    
+    socket.offAny();
   });
 
 
@@ -229,11 +246,17 @@ io.on('connection', socket => {
 
   // Listen to "rematchDecline"
   socket.on("rematchDecline", ({ room, name }) => {
-    socket.broadcast.to(room).emit("rematchRequestDeclined", name);
+    // socket.broadcast.to(room).emit("rematchRequestDeclined", name);
+    io.to(room).emit("rematchRequestDeclined", name);
   });
 
-  // TODO: Listen to "rematchConfirm"
-  socket.on("rematchConfirm", (room) => {
+  // Listen to "rematchConfirm"
+  socket.on("rematchConfirm", ({ room, name }) => {
+    io.to(room).emit("rematchConfirmed", { room, name });
+  });
+
+  // Listen to rematchAcknowledged
+  socket.on("rematchAcknowledged", (room) => {
     currentRoom = getCurrentRoom(room)[0];
     // reset Board
     currentRoom.board.resetGame();
@@ -246,21 +269,20 @@ io.on('connection', socket => {
     
     // Emit 'restartGame' event to players in the room
     const boardState = currentRoom.board.board;
-    const turn = currentRoom.board.turn;
+    const firstTurn = currentRoom.board.turn;
     const movesLeft = currentRoom.board.movesLeft;
-    io.to(room).emit("restartGame", { boardState, turn, movesLeft });
-    console.log("Restarting game");
+    io.to(room).emit("restartGame", { boardState, firstTurn, movesLeft });
+    socket.offAny();
   });
 
   // Listen for "roomLeave" event and check if the room has players, if no players then delete the room
   socket.on("roomLeave", (room) => {
-    console.log(`user left room: ${room}`);
     // Leave Room
     socket.leave(room);
     // Remove Player in rooms array
     removePlayer(socket.id, room);
 
-    const num = getRoomPlayers(room);
+    num = getRoomPlayers(room);
 
     // Delete Room if no players
     if(num && num.length === 0) {
@@ -270,15 +292,17 @@ io.on('connection', socket => {
     if(num && num.length === 1) {
       io.to(room).emit("waiting");
     }
-    console.log("a user left the room");
+    socket.offAny();
   })
 
   // removePlayer from rooms when disconnected
   socket.on("disconnect", () => {
-    const room = getPlayerRoom(socket.id);
-    socket.leave(room);
-    removePlayer(socket.id, room);
-    console.log('user disconnected.')
+    socket.offAny();
+    if(rooms.length > 0) {
+      const room = getPlayerRoom(socket.id);
+      socket.leave(room);
+      removePlayer(socket.id, room);
+    }
   });
 });
 
@@ -307,6 +331,6 @@ mongoose.connect(process.env.MONGODB_URI,
   if(err) return console.log(err);
 
   console.log("MongoDB Connection established.");
-});
+}); 
 
 server.listen(PORT, () => console.log(`Server started on port: ${PORT}.`));

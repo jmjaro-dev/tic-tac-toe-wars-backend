@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const auth = require('../middleware/auth');
 const { check, validationResult } = require('express-validator');
+require('dotenv').config();
 // User Model
 const User = require('../models/User');
 
@@ -13,9 +14,26 @@ const User = require('../models/User');
 router.get('/', auth, async (req, res) => {
   try {
     // Gets the user that matches the id and returns info of the user w/o the password
-    const user = await User.findById(req.user.id).select('-password');
+    const user = await User.findByIdAndUpdate(req.user.id, { $set: { isOnline: true } }, { new: true }).select('-password');
     // return user object as the response
     res.json(user);
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server Error');
+  }
+});
+
+// @route   PUT api/auth/logout
+// @desc    PUT Set isOnline to false when user Logs out
+// @access  Private
+router.put('/logout', auth, async (req, res) => {
+  try {
+    // Gets the user that matches the id and sets isOnline value to false
+    const { id } = req.body;
+
+    await User.findByIdAndUpdate(id, { $set: { isOnline: false } }, { new: true });
+
+    res.json({ msg: "User is now offline."});
   } catch (err) {
     console.error(err.message);
     res.status(500).send('Server Error');
@@ -61,7 +79,7 @@ router.post('/', [
     }
     
     // Generate JWT Token
-    jwt.sign(payload, config.get('jwtSecret'), {
+    jwt.sign(payload, process.env.JWT_SECRET, {
       expiresIn: 360000
     }, (err, token) => {
       if(err) throw err;

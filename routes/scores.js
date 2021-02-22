@@ -13,8 +13,8 @@ const Score = require('../models/Score');
 router.get('/', async (req,res) => {
   try {
     // Gets all scores and sort by latest scores
-    const scores = await Score.find().sort({ score: 'desc' }).select('-_id userId username score').limit(20);
-    res.json(scores);
+    const wins = await Score.find().sort({ wins: 'desc' }).select('-_id userId username wins').limit(10);
+    res.json(wins);
   } catch (err) {
     console.error(err.message);
     res.status(500).send('Server Error');
@@ -27,15 +27,15 @@ router.get('/', async (req,res) => {
 router.get('/:id', auth, async (req,res) => {
   try {
     // Check if user exists
-    let user = await User.findById(req.params.id).select("username score");
+    let user = await User.findById(req.params.id).select("username wins");
 
     if(!user) {
       return res.status(404).json({ msg: 'User not found' });
     }
 
-    const score = user.score;
+    const wins = user.wins;
 
-    res.json(score);
+    res.json(wins);
   } catch (err) {
     console.error(err.message);
     res.status(500).send('Server Error');
@@ -47,7 +47,7 @@ router.get('/:id', auth, async (req,res) => {
 // @access  Private
 router.post('/update/score/:userId', [ auth, [
   check('username', 'Username is required').not().isEmpty(),
-  check('score', 'Score is required').not().isEmpty()
+  check('wins', 'Wins is required').not().isEmpty()
   ] ], async (req,res) => {
   const errors = validationResult(req);
 
@@ -56,10 +56,10 @@ router.post('/update/score/:userId', [ auth, [
     return res.status(400).json({ errors: errors.array() });
   }
 
-  const { username, score } = req.body;
+  const { username, wins } = req.body;
   
   // Check if user exists in User database
-  let user = await User.findById(req.params.userId).select('username score');
+  let user = await User.findById(req.params.userId).select('username wins');
   
   if(!user) {
     return res.status(404).json({ msg: 'User not found' });
@@ -79,14 +79,15 @@ router.post('/update/score/:userId', [ auth, [
     if(isInBoard) {
       // Update User Score
       try {
-        const updatedScore = user.score + score;
+        const updatedScore = user.wins + 1;
         // Create score object 
-        const scoreField = { score: updatedScore };
-  
-        await Score.findOneAndUpdate({ userId: req.params.userId }, { $set: scoreField }, { new: true })
+        const winsField = { wins: updatedScore };
+        
+        // Update User Score in scores database
+        await Score.findOneAndUpdate({ userId: req.params.userId }, { $set: winsField }, { new: true })
   
         // Update User Score in user database
-        await User.findByIdAndUpdate(req.params.userId, { $set: scoreField }, { new: true })
+        await User.findByIdAndUpdate(req.params.userId, { $set: winsField }, { new: true })
   
         res.json({ msg: 'success'});
       } catch (err) {
@@ -100,14 +101,15 @@ router.post('/update/score/:userId', [ auth, [
         const playerScore = new Score({
           userId: req.params.userId,
           username,
-          score
+          wins: user.wins+1
         });
-    
+        
+        // Save score to Score database
         await playerScore.save();
   
         // Update User Score in user database
-        const scoreField = { score };
-        await User.findByIdAndUpdate(req.params.userId, { $set: scoreField }, { new: true })
+        const winsField = { wins };
+        await User.findByIdAndUpdate(req.params.userId, { $set: winsField }, { new: true })
     
         res.json({ msg: 'success'});
       } catch (err) {

@@ -18,6 +18,7 @@ class GameBoard {
   // Player move
   playerMove(idx, token) {
     if(this.determineWinner(this.board) || (this.board[idx] === 'X' || this.board[idx] === 'O')) {
+      this.switchTurn();
       return;
     }
 

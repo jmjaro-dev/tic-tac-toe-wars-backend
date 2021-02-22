@@ -9,9 +9,13 @@ const UserSchema = mongoose.Schema({
     type: String,
     required: true
   },
-  score: {
+  wins: {
     type: Number,
     default: 0
+  },
+  isOnline: {
+    type: Boolean,
+    default: false
   }
 },
 {
