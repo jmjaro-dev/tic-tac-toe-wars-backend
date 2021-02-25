@@ -83,9 +83,10 @@ const assignToken = (room) => {
   const p1Token = chooseTurn();
   const p2Token = p1Token === 'X' ? 'O': 'X';
 
-  currentRoom = getCurrentRoom(room)[0];
-  currentRoom.players[0].token = p1Token;
-  currentRoom.players[1].token = p2Token;
+  if(room.players.length === 2) {
+    room.players[1].token = p2Token;
+    room.players[0].token = p1Token;
+  }
 }
 
 // Make a New Board 
@@ -137,8 +138,12 @@ function getPlayerRoom(playerID) {
 // Get Room players 
 function getRoomPlayers(roomID) {
   if(rooms.length > 0) {
-    players = rooms.filter(room => room.id === roomID)[0].players; 
-    return players;
+    const room = rooms.filter(room => room.id === roomID)[0];
+    if(room.players !== undefined) {
+      const players = rooms.filter(room => room.id === roomID)[0].players; 
+      return players;
+    } 
+    return null;
   }
 }
 
@@ -175,19 +180,28 @@ io.on('connection', socket => {
       playerJoin(id, name, userId, room, wins);
 
       // Get Room players
-      playersInRoom = getRoomPlayers(room);
-
+      currentRoom = getCurrentRoom(room)[0];
+      playersInRoom = currentRoom.players;
+      if(playersInRoom === null) io.to(socket.id).emit("joinError");
       // If not enough players in room emit 'waiting' event
       if(playersInRoom.length === 1){
+        // Get Current Room
+        currentRoom = getCurrentRoom(room)[0];
+        if(currentRoom.board) {
+          // Get Current Board
+          currentBoard = currentRoom.board;
+          currentBoard.resetGame();
+        }
         io.to(room).emit("waiting");
       }
 
       // If have enough players then set the Game 
       if(playersInRoom.length === 2) {
+        currentRoom = getCurrentRoom(room)[0];
         // Assign Tokens
-        assignToken(room);
+        assignToken(currentRoom);
         // Emit 'tokenAssignment' to players
-        playersInRoom.forEach(player => io.to(player.id).emit('tokenAssignment', { token: player.token }));
+        playersInRoom.forEach(player => io.to(player.id).emit('tokenAssignment', { playerToken: player.token }));
         // Initialize a new Board for the Current Room
         newBoard(room);
 
@@ -213,26 +227,29 @@ io.on('connection', socket => {
 
   // Listen for "playerMove" event and emit "winner" if there is already a winner or "updateBoard" event to update the game board
   socket.on("playerMove", ({ room, token, idx }) => {
+    currentRoom = getCurrentRoom(room)[0];
     currentBoard = getCurrentRoom(room)[0].board;
     currentBoard.playerMove(idx, token);
     playerWhoWon = currentBoard.determineWinner(currentBoard.board);
     
-    
     // Check for winner
     if(playerWhoWon !== null && currentBoard.movesLeft > 0) {
-      if(!socket.sentMydata) {
-        io.to(room).emit('winner', { boardState: currentBoard.board, playerWhoWon })
-        socket.sentMydata = true;
-      }
+      currentRoom[0].players.forEach(player => {
+        if(player.token === playerWhoWon) {
+          player.wins = player.wins + 1;
+        }
+
+        return player;
+      })
+      // Emit Winner event to Client
+      io.to(room).emit('winner', { boardState: currentBoard.board, playerWhoWon, players: playersInRoom });
     } else if(playerWhoWon === null && currentBoard.movesLeft === 0 ) {
       // Check for draw
       io.to(room).emit('draw', { boardState: currentBoard.board, movesLeft: currentBoard.movesLeft });
     } else {
       currentBoard.switchTurn();
-      io.to(room).emit('updateBoard', { boardState: currentBoard.board, nextTurn: currentBoard.turn, movesLeft: currentBoard.movesLeft })
+      io.to(room).emit('updateBoard', { boardState: currentBoard.board, nextTurn: currentBoard.turn, movesLeft: currentBoard.movesLeft, players: playersInRoom })
     }   
-    
-    socket.offAny();
   });
 
 
@@ -254,22 +271,22 @@ io.on('connection', socket => {
 
   // Listen to rematchAcknowledged
   socket.on("rematchAcknowledged", (room) => {
+    // Get Current Room
     currentRoom = getCurrentRoom(room)[0];
+    // Get Current Board
+    currentBoard = currentRoom.board;
     // reset Board
-    currentRoom.board.resetGame();
+    currentBoard.resetGame();
     // reassign tokens
-    assignToken(room);
-    // Get players in room
-    playersInRoom = getRoomPlayers(room);
+    assignToken(currentRoom);
     // Emit 'tokenAssignment' to players
-    playersInRoom.forEach(player => io.to(player.id).emit('tokenAssignment', { token: player.token }));
+    currentRoom.players.forEach(player => io.to(player.id).emit('tokenAssignment', { playerToken: player.token }));
     
     // Emit 'restartGame' event to players in the room
     const boardState = currentRoom.board.board;
     const firstTurn = currentRoom.board.turn;
     const movesLeft = currentRoom.board.movesLeft;
-    io.to(room).emit("restartGame", { boardState, firstTurn, movesLeft });
-    socket.offAny();
+    io.to(room).emit("restartGame", { boardState, firstTurn, movesLeft, players: currentRoom.players });
   });
 
   // Listen for "roomLeave" event and check if the room has players, if no players then delete the room
@@ -294,12 +311,12 @@ io.on('connection', socket => {
 
   // removePlayer from rooms when disconnected
   socket.on("disconnect", () => {
-    socket.offAny();
     if(rooms.length > 0) {
       const room = getPlayerRoom(socket.id);
       socket.leave(room);
       removePlayer(socket.id, room);
     }
+    socket.offAny();
   });
 });
 
